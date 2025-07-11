@@ -30,8 +30,8 @@ services:
       
   python_app:
     build:
-      context: ./python_etl
-      dockerfile: /docker/Dockerfile
+      context: .
+      dockerfile: python_etl/docker/Dockerfile
     volumes:
       - ./input:/app/input
 
