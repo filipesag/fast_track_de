@@ -2,22 +2,46 @@ version: '3.9'
 
 services:
   postgres:
-    #defina as propriedades do seu servidor Posgres
+    image: postgres:latest
+    restart: always
+    environment:
+      POSTGRES_USER: f_compass
+      POSTGRES_PASSWORD: trilha_de
+      POSTGRES_DB: pd_dw
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - local_network
 
   mongodb:
-    #defina as demais propriedades de seu servidor MongoDB. Observe que estamos deixando o volume configurado, pois ele é necessário para inicializar a base e coleção de dados utilizada no projeto
+    image: mongo:latest
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: f_compass
+      MONGO_INITDB_ROOT_PASSWORD: trilha_de
+    ports:
+      - "27017:27017"
     volumes:
       - ./mongodb-init/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    networks:
+      - local_network
       
   python_app:
     build:
       context: ./python_etl
       dockerfile: /docker/Dockerfile
-    #defina as propriedades do seu servidor Python  
+    volumes:
+      - ./input:/app/input
+
     depends_on:
       - postgres
-      - mongodb   
-    
+      - mongodb 
+
+volumes:
+  db_data:
 
 networks:
-  #defina sua rede
+  local_network:
+    driver: bridge
