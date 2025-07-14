@@ -6,6 +6,6 @@ COPY  requirements.txt  ./
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY  python_etl/ ./
 
-CMD ["python", "etl.py"]
+CMD ["sh", "-c", "sleep 3 && python etl.py"]
