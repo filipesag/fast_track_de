@@ -8,4 +8,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY  python_etl/ ./
 
-CMD ["sh", "-c", "sleep 3 && python etl.py"]
+CMD ["python", "etl.py"]
