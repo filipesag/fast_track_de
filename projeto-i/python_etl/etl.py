@@ -41,13 +41,19 @@ def create_table(conn, script, table_name):
         logging.info(f'Table {table_name} created!')
     except psycopg2.Error as e:
         logging.critical(f"Table {table_name} not created - {e.pgerror}")
+        raise e
 
 def close_connection(conn):
     conn.close()
     logging.info("Connection closed!")
-    
+
 def uuid_generate():
   return uuid.uuid4()
+
+def creating_id_column(df, id_column_name):
+    df[f'{id_column_name}'] = df.apply(lambda x:uuid_generate(), axis=1)
+    return df
+
 
 
 ORDER_STATUS_TABLE_SCRIPT = """
@@ -126,66 +132,39 @@ create_table(conn, ORDER_FACT_TABLE_SCRIPT,'fact_order')
 close_connection(conn)
 
 
+# juntando DFs para tratamento dos dados
+try:
+    df = pd.read_csv('./input/olist_order_items_dataset.csv')
+    df_grouped_by_id = df.groupby("order_id")["order_item_id"].max().reset_index(drop=True, inplace=True)
+    df_grouped_by_id = df_grouped_by_id.drop_duplicates(subset=['order_id'])
+    new_df = pd.merge(df_grouped_by_id, df, on=["order_id", "order_item_id"], how="inner")
+
+    new_df = creating_id_column(new_df, 'status_id')
+    new_df = creating_id_column(new_df, 'payment_method_id')
+    new_df = creating_id_column(new_df, 'time_id')
+
+    df_payment = pd.read_csv('./input/olist_order_payments_dataset.csv')
+    df_payment = df_payment.drop_duplicates(subset=['order_id','payment_sequential'])
+    df_merge_order_payment = pd.merge(new_df,df_payment, on='order_id', how='left')
+
+    df_status = pd.read_csv('./input/olist_orders_dataset.csv')
+    df_status = df_status.drop_duplicates(subset=['order_id'])
+    df_merge_order_status = pd.merge(df_merge_order_payment, df_status[['order_id','customer_id','order_status','order_purchase_timestamp']], on='order_id', how='left')
+
+    df_products = pd.read_csv('./input/olist_products_dataset.csv')
+    df_products = df_products.drop_duplicates(subset=['product_id'])
+    df_merge_order_produtcs = pd.merge(df_merge_order_status, df_products[['product_id','product_category_name']], on='product_id', how='left')
+
+    df_local = pd.read_csv('./input/olist_customers_dataset.csv')
+    df_local = df_local.drop_duplicates(subset=['customer_id','customer_unique_id'])
+    df_merge_order_local = pd.merge(df_merge_order_produtcs, df_local[['customer_id', 'customer_city', 'customer_state']], on='customer_id', how='left')
+
+except Exception as e:
+    logging.critical(f"Error in data processing: {e}")
+    raise e
 
 
-
-df = pd.read_csv('./input/olist_order_items_dataset.csv')
-df_grouped_by_id = df.groupby("order_id")["order_item_id"].max().reset_index()
-df_grouped_by_id = df_grouped_by_id.drop_duplicates(subset=['order_id'])
-new_df = pd.merge(df_grouped_by_id, df, on=["order_id", "order_item_id"], how="inner")
-new_df.head(15)
-
-
-
-new_df['status_id'] = new_df.apply(lambda x:uuid_generate(), axis=1)
-new_df.head(5)
-
-
-new_df['payment_method_id'] = new_df.apply(lambda x:uuid_generate(), axis=1)
-new_df.head(5)
-
-new_df['time_id'] = new_df.apply(lambda x:uuid_generate(), axis=1)
-new_df.head(5)
-
-
-
-df_payment = pd.read_csv('./input/olist_order_payments_dataset.csv')
-df_payment = df_payment.drop_duplicates(subset=['order_id','payment_sequential'])
-df_merge_order_payment = pd.merge(new_df,df_payment, on='order_id', how='left')
-df_merge_order_payment.head(5)
-
-
-
-
-df_status = pd.read_csv('./input/olist_orders_dataset.csv')
-df_status = df_status.drop_duplicates(subset=['order_id'])
-df_merge_order_status = pd.merge(df_merge_order_payment, df_status[['order_id','customer_id','order_status','order_purchase_timestamp']], on='order_id', how='left')
-df_merge_order_status.head(5)
-
-
-
-df_products = pd.read_csv('./input/olist_products_dataset.csv')
-df_products = df_products.drop_duplicates(subset=['product_id'])
-df_merge_order_produtcs = pd.merge(df_merge_order_status, df_products[['product_id','product_category_name']], on='product_id', how='left')
-df_merge_order_produtcs.head(5)
-
-
-df_local = pd.read_csv('./input/olist_customers_dataset.csv')
-df_local = df_local.drop_duplicates(subset=['customer_id','customer_unique_id'])
-df_merge_order_local = pd.merge(df_merge_order_produtcs, df_local[['customer_id', 'customer_city', 'customer_state']], on='customer_id', how='left')
-df_merge_order_local.head(5)
-
-
-
-missing_values = df_merge_order_local.isnull().sum()
-print(missing_values)
-
-d = df_merge_order_local[df_merge_order_local['payment_type'].isnull()]
-d
-
-
-
-
+#conectando com mongodb 
 try:
     client = MongoClient("mongodb://f_compass:trilha_de@mongodb:27017/")
     db = client["ecommerce"]
@@ -198,18 +177,23 @@ except ConnectionFailure:
     logging.critical("Connection with MongoDB Docker failed!")
 
 collection_reviews = db["order_reviews"]
-
 reviews_doc = collection_reviews.find({})
 reviews_df = pd.DataFrame(reviews_doc)
 
 df_full_merged = pd.merge(df_merge_order_local, reviews_df[['order_id','review_score']], on='order_id', how='left')
-print(df_full_merged.head(5))
 client.close()
 
-
+#cria campos faltantes
 df_full_merged['payment_value'] = df_full_merged['order_item_id'] * df_full_merged['price'] + df_full_merged['freight_value'] * df_full_merged['order_item_id'] 
+df_full_merged['order_purchase_timestamp'] = pd.to_datetime(df_full_merged['order_purchase_timestamp'])
+df_full_merged['order_time'] = df_full_merged['order_purchase_timestamp'].dt.time
+df_full_merged['order_date'] = df_full_merged['order_purchase_timestamp'].dt.date
+df_full_merged['order_day'] = df_full_merged['order_purchase_timestamp'].dt.day_name()
+df_full_merged['order_month'] = df_full_merged['order_purchase_timestamp'].dt.month_name()
+df_full_merged['order_trimester'] = df_full_merged['order_purchase_timestamp'].dt.quarter
+df_full_merged['order_year'] = df_full_merged['order_purchase_timestamp'].dt.year
 
-
+#tratando de dados NaN, renomeando colunas e excluindo colunas inutilizaveis
 df_full_merged.fillna({
     'review_score':np.nan,
     'payment_sequential':np.nan,
@@ -217,8 +201,6 @@ df_full_merged.fillna({
     'product_category_name':'Categoria não informada.',
     'payment_installments':np.nan
 }, inplace=True)
-missing_values = df_full_merged.isnull().sum()
-print(missing_values)
 
 df_full_merged.rename({
     "order_item_id":"number_of_items",
@@ -233,20 +215,15 @@ df_full_merged.drop(columns=['seller_id',
                              'shipping_limit_date',
                              'seller_id'], inplace=True)
 
-
-df_full_merged.reset_index(drop=True, inplace=True)
-
 df_final = df_full_merged.where(pd.notnull(df_full_merged), None)
 
 missing_values = df_final.isnull().sum()
 print(missing_values)
 
 
-
-DATABASE_URL = 'postgresql://f_compass:trilha_de@postgres:5432/pd_dw'
-engine = None
-
+#conectando com postgres com sqlalchemy para popular banco
 try:
+    DATABASE_URL = 'postgresql://f_compass:trilha_de@postgres:5432/pd_dw'
     engine = sqlalchemy.create_engine(DATABASE_URL)
     logging.info("Connection with Postgres Docker completed!")
     con_alchemy = engine.connect()
@@ -271,5 +248,5 @@ with engine.begin() as conn:
 
 
 
-d1 = pd.read_sql_query("SELECT * FROM dim_order_status", con=engine)
+d1 = pd.read_sql_query("SELECT * FROM dim_order_status LIMIT 5", con=engine)
 print(d1)
