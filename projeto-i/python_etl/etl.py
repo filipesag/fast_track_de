@@ -1,4 +1,3 @@
-
 import time
 import psycopg2
 import logging
@@ -34,68 +33,66 @@ else:
     logging.critical("Connection attempt number is over...")
     raise Exception("Connection with Postgres Docker failed!")
 
+def create_table(conn, script, table_name):
+    try:
+        cur = conn.cursor()
+        cur.execute(script)
+        conn.commit()
+        logging.info(f'Table {table_name} created!')
+    except psycopg2.Error as e:
+        logging.critical(f"Table {table_name} not created - {e.pgerror}")
 
-cur = conn.cursor()
+def close_connection(conn):
+    conn.close()
+    logging.info("Connection closed!")
+    
+def uuid_generate():
+  return uuid.uuid4()
 
-# criando tabela dimensao order_status
-cur.execute("""
+
+ORDER_STATUS_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_order_status (
     status_id UUID PRIMARY KEY,
     order_status VARCHAR(40)
-);
-""")
-conn.commit()
-logging.info("Table dim_order_status created")
+    );
+"""
 
-# criando tabela dimensao customer
-cur.execute("""
+CUSTOMER_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_customer (
     customer_id UUID PRIMARY KEY,
     customer_city VARCHAR(80),
     customer_state VARCHAR(2)
-);
-""")
-conn.commit()
-logging.info("Table dim_customer created")
+    );
+"""
 
-# criando tabela dimensao product
-cur.execute("""
-CREATE TABLE IF NOT EXISTS dim_product (
-    product_id UUID PRIMARY KEY,
-    product_category VARCHAR(80)
+PRODUCT_TABLE_SCRIPT ="""
+CREATE TABLE IF NOT EXISTS dim_product ( 
+    product_id UUID PRIMARY KEY, 
+    product_category VARCHAR(80) 
 );
-""")
-conn.commit()
-logging.info("Table dim_product created")
+"""
 
-# criando tabela dimensao payment_method
-cur.execute("""
-CREATE TABLE IF NOT EXISTS dim_payment_method (
-    payment_method_id UUID PRIMARY KEY,
-    payment_method VARCHAR(50),
-    payment_sequential INTEGER
+PAYMENT_METHOD_TABLE_SCRIPT = """
+CREATE TABLE IF NOT EXISTS dim_payment_method ( 
+    payment_method_id UUID PRIMARY KEY, 
+    payment_method VARCHAR(50), 
+    payment_sequential INTEGER 
 );
-""")
-conn.commit()
-logging.info("Table dim_payment_method created")
+"""
 
-# criando tabela dimensao time
-cur.execute("""
+TIME_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_time (
-    order_time_id UUID PRIMARY KEY,
-    order_datetime TIMESTAMP,
-    order_day SMALLINT,
-    order_month VARCHAR(20),
-    order_trimester INTEGER,
-    order_year INTEGER,
-    order_hour TIME
+    order_time_id UUID PRIMARY KEY, 
+    order_datetime TIMESTAMP, 
+    order_day SMALLINT, 
+    order_month VARCHAR(20), 
+    order_trimester INTEGER, 
+    order_year INTEGER, 
+    order_hour TIME 
 );
-""")
-conn.commit()
-logging.info("Table dim_time created")
+"""
 
-# criando tabela fato order
-cur.execute("""
+ORDER_FACT_TABLE_SCRIPT ="""
 CREATE TABLE IF NOT EXISTS fato_order (
     order_id UUID PRIMARY KEY,
     score SMALLINT,
@@ -115,24 +112,22 @@ CREATE TABLE IF NOT EXISTS fato_order (
     FOREIGN KEY (order_payment_method_id) REFERENCES dim_payment_method(payment_method_id),
     FOREIGN KEY (order_status_id) REFERENCES dim_order_status(status_id)
 );
-""")
-conn.commit()
-logging.info("Table fact_order created")
+"""
 
-cur.close()
-conn.close()
-logging.info("Connection closed!")
+# criando tabelas do modelo dimensional
+create_table(conn, ORDER_STATUS_TABLE_SCRIPT,'dim_order_status')
+create_table(conn, CUSTOMER_TABLE_SCRIPT,'dim_customer')
+create_table(conn, PRODUCT_TABLE_SCRIPT,'dim_product')
+create_table(conn, PAYMENT_METHOD_TABLE_SCRIPT,'dim_payment_method')
+create_table(conn, TIME_TABLE_SCRIPT,'dim_time')
+create_table(conn, ORDER_FACT_TABLE_SCRIPT,'fact_order')
 
-
-
-
-
-def uuid_generate():
-  return uuid.uuid4()
+# fechando conexao com banco
+close_connection(conn)
 
 
-def uuid_removing_hyphens(uuid):
-    return str(uuid).replace("-", "")
+
+
 
 df = pd.read_csv('./input/olist_order_items_dataset.csv')
 df_grouped_by_id = df.groupby("order_id")["order_item_id"].max().reset_index()
@@ -143,16 +138,13 @@ new_df.head(15)
 
 
 new_df['status_id'] = new_df.apply(lambda x:uuid_generate(), axis=1)
-new_df['status_id'] = new_df['status_id'].apply(uuid_removing_hyphens)
 new_df.head(5)
 
 
 new_df['payment_method_id'] = new_df.apply(lambda x:uuid_generate(), axis=1)
-new_df['payment_method_id'] = new_df['payment_method_id'].apply(uuid_removing_hyphens)
 new_df.head(5)
 
 new_df['time_id'] = new_df.apply(lambda x:uuid_generate(), axis=1)
-new_df['time_id'] = new_df['time_id'].apply(uuid_removing_hyphens)
 new_df.head(5)
 
 
@@ -214,3 +206,70 @@ df_full_merged = pd.merge(df_merge_order_local, reviews_df[['order_id','review_s
 print(df_full_merged.head(5))
 client.close()
 
+
+df_full_merged['payment_value'] = df_full_merged['order_item_id'] * df_full_merged['price'] + df_full_merged['freight_value'] * df_full_merged['order_item_id'] 
+
+
+df_full_merged.fillna({
+    'review_score':np.nan,
+    'payment_sequential':np.nan,
+    'payment_type':'Não informado.',
+    'product_category_name':'Categoria não informada.',
+    'payment_installments':np.nan
+}, inplace=True)
+missing_values = df_full_merged.isnull().sum()
+print(missing_values)
+
+df_full_merged.rename({
+    "order_item_id":"number_of_items",
+    "payment_type":"payment_method",
+    "product_category_name":"product_category",
+    "payment_installments":"installments",
+    "review_score":"score",
+    "order_purchase_timestamp":"order_datetime",
+}, inplace=True)
+
+df_full_merged.drop(columns=['seller_id',
+                             'shipping_limit_date',
+                             'seller_id'], inplace=True)
+
+
+df_full_merged.reset_index(drop=True, inplace=True)
+
+df_final = df_full_merged.where(pd.notnull(df_full_merged), None)
+
+missing_values = df_final.isnull().sum()
+print(missing_values)
+
+
+
+DATABASE_URL = 'postgresql://f_compass:trilha_de@postgres:5432/pd_dw'
+engine = None
+
+try:
+    engine = sqlalchemy.create_engine(DATABASE_URL)
+    logging.info("Connection with Postgres Docker completed!")
+    con_alchemy = engine.connect()
+except Exception:
+    logging.critical("Connection with Postgres Docker failed!")
+
+df_status_final = df_final[['status_id', 'order_status']]
+
+with engine.begin() as conn:
+    for _, row in df_status_final.iterrows():
+        conn.execute(
+            sqlalchemy.text("""
+                INSERT INTO dim_order_status (status_id, status_name)
+                VALUES (:status_id, :status_name)
+                ON CONFLICT (status_id) DO NOTHING;
+            """),
+            {
+                "status_id": row["status_id"],
+                "status_name": row["order_status"]
+            }
+        )
+
+
+
+d1 = pd.read_sql_query("SELECT * FROM dim_order_status", con=engine)
+print(d1)
