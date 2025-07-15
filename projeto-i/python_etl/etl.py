@@ -1,3 +1,4 @@
+
 import time
 import psycopg2
 import logging
@@ -119,10 +120,75 @@ cur.close()
 conn.close()
 logging.info("Connection closed!")
 
+#%%
+import time
+import psycopg2
+import logging
+import pandas as pd
+import uuid
+
+#%%
+def uuid_generate():
+  return uuid.uuid4()
+
+#%%
+def uuid_removing_hyphens(uuid):
+    return str(uuid).replace("-", "")
+#%%
+df = pd.read_csv('../input/olist_order_items_dataset.csv')
+df_grouped_by_id = df.groupby("order_id")["order_item_id"].max().reset_index()
+df_grouped_by_id = df_grouped_by_id.drop_duplicates(subset=['order_id'])
+new_df = pd.merge(df_grouped_by_id, df, on=["order_id", "order_item_id"], how="inner")
+new_df.head(15)
+
+
+# %%
+new_df['status_id'] = new_df.apply(lambda x:uuid_generate(), axis=1)
+new_df['status_id'] = new_df['status_id'].apply(uuid_removing_hyphens)
+new_df.head(5)
+
+# %%
+new_df['payment_method_id'] = new_df.apply(lambda x:uuid_generate(), axis=1)
+new_df['payment_method_id'] = new_df['payment_method_id'].apply(uuid_removing_hyphens)
+new_df.head(5)
+# %%
+new_df['time_id'] = new_df.apply(lambda x:uuid_generate(), axis=1)
+new_df['time_id'] = new_df['time_id'].apply(uuid_removing_hyphens)
+new_df.head(5)
+
+
+# %%
+df_payment = pd.read_csv('../input/olist_order_payments_dataset.csv')
+df_payment = df_payment.drop_duplicates(subset=['order_id','payment_sequential'])
+df_merge_order_payment = pd.merge(new_df,df_payment, on='order_id', how='left')
+df_merge_order_payment.head(5)
 
 
 
-status_df = pd.read_csv("input/olist_orders_dataset.csv")
-status_df.head(5)
+# %%
+df_status = pd.read_csv('../input/olist_orders_dataset.csv')
+df_status = df_status.drop_duplicates(subset=['order_id'])
+df_merge_order_status = pd.merge(df_merge_order_payment, df_status[['order_id','customer_id','order_status','order_purchase_timestamp']], on='order_id', how='left')
+df_merge_order_status.head(5)
 
 
+# %%
+df_products = pd.read_csv('../input/olist_products_dataset.csv')
+df_products = df_products.drop_duplicates(subset=['product_id'])
+df_merge_order_produtcs = pd.merge(df_merge_order_status, df_products[['product_id','product_category_name','product_weight_g']], on='product_id', how='left')
+df_merge_order_produtcs.head(5)
+
+# %%
+df_local = pd.read_csv('../input/olist_customers_dataset.csv')
+df_local = df_local.drop_duplicates(subset=['customer_id','customer_unique_id'])
+df_merge_order_local = pd.merge(df_merge_order_produtcs, df_local[['customer_id', 'customer_city', 'customer_state']], on='customer_id', how='left')
+df_merge_order_local.head(5)
+
+
+# %%
+missing_values = df_merge_order_local.isnull().sum()
+missing_values
+# %%
+d = df_merge_order_local[df_merge_order_local['payment_type'].isnull()]
+d
+# %%
