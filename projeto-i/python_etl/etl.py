@@ -1,11 +1,13 @@
 import time
 import psycopg2
 import logging
+import pandas as pd
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
+
 
 max_attempts = 10
 
@@ -116,3 +118,11 @@ logging.info("Table fact_order created")
 cur.close()
 conn.close()
 logging.info("Connection closed!")
+
+
+
+
+status_df = pd.read_csv("input/olist_orders_dataset.csv")
+status_df.head(5)
+
+
