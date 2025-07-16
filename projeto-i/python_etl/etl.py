@@ -58,8 +58,8 @@ def creating_id_column(df, id_column_name):
 
 ORDER_STATUS_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_order_status (
-    status_id UUID PRIMARY KEY,
-    order_status VARCHAR(40)
+    status_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_status VARCHAR(40) UNIQUE
     );
 """
 
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS dim_product (
 
 PAYMENT_METHOD_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_payment_method ( 
-    payment_method_id UUID PRIMARY KEY, 
+    payment_method_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
     payment_method VARCHAR(50), 
     payment_sequential INTEGER 
 );
@@ -88,12 +88,13 @@ CREATE TABLE IF NOT EXISTS dim_payment_method (
 
 TIME_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_time (
-    order_time_id UUID PRIMARY KEY, 
-    order_datetime TIMESTAMP, 
-    order_day SMALLINT, 
+    order_time_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
+    order_datetime TIMESTAMP UNIQUE, 
+    order_day VARCHAR(20), 
     order_month VARCHAR(20), 
     order_trimester INTEGER, 
     order_year INTEGER, 
+    order_date DATE,
     order_hour TIME 
 );
 """
@@ -135,13 +136,9 @@ close_connection(conn)
 # juntando DFs para tratamento dos dados
 try:
     df = pd.read_csv('./input/olist_order_items_dataset.csv')
-    df_grouped_by_id = df.groupby("order_id")["order_item_id"].max().reset_index(drop=True, inplace=True)
+    df_grouped_by_id = df.groupby("order_id")["order_item_id"].max().reset_index()
     df_grouped_by_id = df_grouped_by_id.drop_duplicates(subset=['order_id'])
     new_df = pd.merge(df_grouped_by_id, df, on=["order_id", "order_item_id"], how="inner")
-
-    new_df = creating_id_column(new_df, 'status_id')
-    new_df = creating_id_column(new_df, 'payment_method_id')
-    new_df = creating_id_column(new_df, 'time_id')
 
     df_payment = pd.read_csv('./input/olist_order_payments_dataset.csv')
     df_payment = df_payment.drop_duplicates(subset=['order_id','payment_sequential'])
@@ -185,40 +182,37 @@ client.close()
 
 #cria campos faltantes
 df_full_merged['payment_value'] = df_full_merged['order_item_id'] * df_full_merged['price'] + df_full_merged['freight_value'] * df_full_merged['order_item_id'] 
-df_full_merged['order_purchase_timestamp'] = pd.to_datetime(df_full_merged['order_purchase_timestamp'])
-df_full_merged['order_time'] = df_full_merged['order_purchase_timestamp'].dt.time
-df_full_merged['order_date'] = df_full_merged['order_purchase_timestamp'].dt.date
-df_full_merged['order_day'] = df_full_merged['order_purchase_timestamp'].dt.day_name()
-df_full_merged['order_month'] = df_full_merged['order_purchase_timestamp'].dt.month_name()
-df_full_merged['order_trimester'] = df_full_merged['order_purchase_timestamp'].dt.quarter
-df_full_merged['order_year'] = df_full_merged['order_purchase_timestamp'].dt.year
+df_full_merged['order_datetime'] = pd.to_datetime(df_full_merged['order_purchase_timestamp'])
+df_full_merged['order_time'] = df_full_merged['order_datetime'].dt.time
+df_full_merged['order_date'] = df_full_merged['order_datetime'].dt.date
+df_full_merged['order_day'] = df_full_merged['order_datetime'].dt.day_name()
+df_full_merged['order_month'] = df_full_merged['order_datetime'].dt.month_name()
+df_full_merged['order_trimester'] = df_full_merged['order_datetime'].dt.quarter
+df_full_merged['order_year'] = df_full_merged['order_datetime'].dt.year
 
 #tratando de dados NaN, renomeando colunas e excluindo colunas inutilizaveis
-df_full_merged.fillna({
-    'review_score':np.nan,
-    'payment_sequential':np.nan,
-    'payment_type':'Não informado.',
-    'product_category_name':'Categoria não informada.',
-    'payment_installments':np.nan
-}, inplace=True)
 
 df_full_merged.rename({
     "order_item_id":"number_of_items",
     "payment_type":"payment_method",
     "product_category_name":"product_category",
     "payment_installments":"installments",
-    "review_score":"score",
-    "order_purchase_timestamp":"order_datetime",
+    "review_score":"score"
+}, inplace=True)
+
+df_full_merged.fillna({
+    'score': np.nan, 
+    'payment_sequential': np.nan,
+    'payment_method': 'Não informado.', 
+    'product_category': 'Categoria não informada.', 
+    'installments': np.nan 
 }, inplace=True)
 
 df_full_merged.drop(columns=['seller_id',
-                             'shipping_limit_date',
-                             'seller_id'], inplace=True)
+                             'shipping_limit_date'
+                            ], inplace=True, errors='ignore')
 
 df_final = df_full_merged.where(pd.notnull(df_full_merged), None)
-
-missing_values = df_final.isnull().sum()
-print(missing_values)
 
 
 #conectando com postgres com sqlalchemy para popular banco
@@ -230,23 +224,76 @@ try:
 except Exception:
     logging.critical("Connection with Postgres Docker failed!")
 
-df_status_final = df_final[['status_id', 'order_status']]
+df_status_final = df_final[['order_status']]
 
 with engine.begin() as conn:
     for _, row in df_status_final.iterrows():
         conn.execute(
             sqlalchemy.text("""
-                INSERT INTO dim_order_status (status_id, status_name)
-                VALUES (:status_id, :status_name)
-                ON CONFLICT (status_id) DO NOTHING;
+                INSERT INTO dim_order_status (order_status)
+                VALUES (:order_status)
+                ON CONFLICT (order_status) DO NOTHING;
             """),
             {
-                "status_id": row["status_id"],
-                "status_name": row["order_status"]
+                "order_status": row["order_status"]
             }
         )
 
 
+df_time_final = df_final[['order_datetime', 'order_day', 'order_month', 'order_trimester', 'order_year', 'order_date', 'order_time']]
 
-d1 = pd.read_sql_query("SELECT * FROM dim_order_status LIMIT 5", con=engine)
-print(d1)
+with engine.begin() as conn:
+    for _, row in df_time_final.iterrows():
+        conn.execute(
+            sqlalchemy.text("""
+                INSERT INTO dim_time (order_datetime, order_day, order_month, order_trimester, order_year, order_date, order_hour)
+                VALUES (:order_datetime, :order_day, :order_month, :order_trimester, :order_year, :order_date, :order_time)
+                ON CONFLICT (order_datetime) DO NOTHING;
+            """),
+            {
+                "order_datetime": row["order_datetime"],
+                "order_day": row["order_day"],
+                "order_month": row["order_month"],
+                "order_trimester": row["order_trimester"],
+                "order_year": row["order_year"],
+                "order_date": row["order_date"],
+                "order_time": row["order_time"]
+            }
+        )
+
+
+df_customer_final = df_final[['customer_id', 'customer_city', 'customer_state']]
+
+with engine.begin() as conn:
+    for _, row in df_customer_final.iterrows():
+        conn.execute(
+            sqlalchemy.text("""
+                INSERT INTO dim_customer (customer_id, customer_city, customer_state)
+                VALUES (:customer_id, :customer_city, :customer_state)
+                ON CONFLICT (customer_id) DO NOTHING;
+            """),
+            {
+                "customer_id": row["customer_id"],
+                "customer_city": row["customer_city"],
+                "customer_state": row["customer_state"]
+            }
+        )
+
+
+df_product_final = df_final[['product_id', 'product_category']]
+
+with engine.begin() as conn:
+    for _, row in df_product_final.iterrows():
+        conn.execute(
+            sqlalchemy.text("""
+                INSERT INTO dim_product (product_id, product_category)
+                VALUES (:product_id, :product_category)
+                ON CONFLICT (product_id) DO NOTHING;
+            """),
+            {
+                "product_id": row["product_id"],
+                "product_category": row["product_category"]
+            }
+        )
+
+df_payment_final = df_final[['payment_method', 'payment_sequential']]
