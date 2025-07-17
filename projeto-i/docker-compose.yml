@@ -1,0 +1,48 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:latest
+    restart: always
+    environment:
+      POSTGRES_USER: f_compass
+      POSTGRES_PASSWORD: trilha_de
+      POSTGRES_DB: pd_dw
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    networks:
+      - local_network
+
+  mongodb:
+    image: mongo:latest
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: f_compass
+      MONGO_INITDB_ROOT_PASSWORD: trilha_de
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongodb-init/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    networks:
+      - local_network
+      
+  python_app:
+    build:
+      context: .
+      dockerfile: python_etl/docker/Dockerfile
+    volumes:
+      - ./input:/app/input
+    networks:
+      - local_network
+    depends_on:
+      - postgres
+      - mongodb
+
+volumes:
+  db_data:
+
+networks:
+  local_network:
+    driver: bridge
