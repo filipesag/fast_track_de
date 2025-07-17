@@ -4,7 +4,6 @@ import logging
 import pandas as pd
 import numpy as np
 import sqlalchemy 
-import uuid
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 
@@ -47,14 +46,6 @@ def close_connection(conn):
     conn.close()
     logging.info("Connection closed!")
 
-def uuid_generate():
-  return uuid.uuid4()
-
-def creating_id_column(df, id_column_name):
-    df[f'{id_column_name}'] = df.apply(lambda x:uuid_generate(), axis=1)
-    return df
-
-
 
 ORDER_STATUS_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_order_status (
@@ -81,8 +72,7 @@ CREATE TABLE IF NOT EXISTS dim_product (
 PAYMENT_METHOD_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_payment_method ( 
     payment_method_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
-    payment_method VARCHAR(50), 
-    payment_sequential INTEGER 
+    payment_method VARCHAR(50) UNIQUE
 );
 """
 
@@ -102,7 +92,7 @@ CREATE TABLE IF NOT EXISTS dim_time (
 ORDER_FACT_TABLE_SCRIPT ="""
 CREATE TABLE IF NOT EXISTS fato_order (
     order_id UUID PRIMARY KEY,
-    score SMALLINT,
+    score INTEGER,
     payment_value DECIMAL(10,2),     
     product_price DECIMAL(10,2),      
     freight_value DECIMAL(10,2),
@@ -141,8 +131,10 @@ try:
     new_df = pd.merge(df_grouped_by_id, df, on=["order_id", "order_item_id"], how="inner")
 
     df_payment = pd.read_csv('./input/olist_order_payments_dataset.csv')
-    df_payment = df_payment.drop_duplicates(subset=['order_id','payment_sequential'])
-    df_merge_order_payment = pd.merge(new_df,df_payment, on='order_id', how='left')
+    df_payment = df_payment.drop_duplicates(subset=['order_id','payment_type'])
+    df_payment_concat = df_payment.groupby('order_id')['payment_type'].agg(lambda x: ', '.join(sorted(set(x)))) \
+    .reset_index()
+    df_merge_order_payment = new_df.merge(df_payment_concat[['order_id','payment_type']], on='order_id', how='left').merge(df_payment[['order_id','payment_installments']], on='order_id', how='left')
 
     df_status = pd.read_csv('./input/olist_orders_dataset.csv')
     df_status = df_status.drop_duplicates(subset=['order_id'])
@@ -190,30 +182,21 @@ df_full_merged['order_month'] = df_full_merged['order_datetime'].dt.month_name()
 df_full_merged['order_trimester'] = df_full_merged['order_datetime'].dt.quarter
 df_full_merged['order_year'] = df_full_merged['order_datetime'].dt.year
 
-#tratando de dados NaN, renomeando colunas e excluindo colunas inutilizaveis
-
-df_full_merged.rename({
-    "order_item_id":"number_of_items",
-    "payment_type":"payment_method",
-    "product_category_name":"product_category",
-    "payment_installments":"installments",
-    "review_score":"score"
-}, inplace=True)
-
-df_full_merged.fillna({
-    'score': np.nan, 
-    'payment_sequential': np.nan,
-    'payment_method': 'Não informado.', 
-    'product_category': 'Categoria não informada.', 
-    'installments': np.nan 
-}, inplace=True)
 
 df_full_merged.drop(columns=['seller_id',
                              'shipping_limit_date'
                             ], inplace=True, errors='ignore')
 
-df_final = df_full_merged.where(pd.notnull(df_full_merged), None)
 
+df_full_merged['payment_type'] = df_full_merged['payment_type'].fillna('Not defined').astype(str)
+df_full_merged['product_category_name'] = df_full_merged['product_category_name'].replace('nan', np.nan)
+df_full_merged['product_category_name'] = df_full_merged['product_category_name'].fillna('Not informed').astype(str)
+df_full_merged['customer_city'] = df_full_merged['customer_city'].fillna('Not informed').astype(str)
+df_full_merged['customer_state'] = df_full_merged['customer_state'].fillna('Not informed').astype(str)
+df_full_merged['review_score'] = df_full_merged['review_score'].replace('nan', np.nan)
+df_full_merged['review_score'] = df_full_merged['review_score'].fillna(-1).astype(int)
+df_full_merged['payment_installments'] = df_full_merged['payment_installments'].replace('nan', np.nan)
+df_full_merged['payment_installments'] = df_full_merged['payment_installments'].fillna(-1).astype(int)
 
 #conectando com postgres com sqlalchemy para popular banco
 try:
@@ -224,8 +207,11 @@ try:
 except Exception:
     logging.critical("Connection with Postgres Docker failed!")
 
-df_status_final = df_final[['order_status']]
+missing_values = df_full_merged.isnull().sum()
+print(missing_values)
 
+
+df_status_final = df_full_merged[['order_status']].copy()
 with engine.begin() as conn:
     for _, row in df_status_final.iterrows():
         conn.execute(
@@ -240,8 +226,7 @@ with engine.begin() as conn:
         )
 
 
-df_time_final = df_final[['order_datetime', 'order_day', 'order_month', 'order_trimester', 'order_year', 'order_date', 'order_time']]
-
+df_time_final = df_full_merged[['order_datetime', 'order_day', 'order_month', 'order_trimester', 'order_year', 'order_date', 'order_time']].copy()
 with engine.begin() as conn:
     for _, row in df_time_final.iterrows():
         conn.execute(
@@ -262,8 +247,7 @@ with engine.begin() as conn:
         )
 
 
-df_customer_final = df_final[['customer_id', 'customer_city', 'customer_state']]
-
+df_customer_final = df_full_merged[['customer_id', 'customer_city', 'customer_state']].copy()
 with engine.begin() as conn:
     for _, row in df_customer_final.iterrows():
         conn.execute(
@@ -280,8 +264,7 @@ with engine.begin() as conn:
         )
 
 
-df_product_final = df_final[['product_id', 'product_category']]
-
+df_product_final = df_full_merged[['product_id', 'product_category_name']].copy()
 with engine.begin() as conn:
     for _, row in df_product_final.iterrows():
         conn.execute(
@@ -292,8 +275,64 @@ with engine.begin() as conn:
             """),
             {
                 "product_id": row["product_id"],
-                "product_category": row["product_category"]
+                "product_category": row["product_category_name"]
             }
         )
 
-df_payment_final = df_final[['payment_method', 'payment_sequential']]
+df_payment_final = df_full_merged[['payment_type']].copy()
+with engine.begin() as conn:
+    for _, row in df_payment_final.iterrows():
+        conn.execute(
+            sqlalchemy.text("""
+                INSERT INTO dim_payment_method (payment_method)
+                VALUES (:payment_method)
+                ON CONFLICT (payment_method) DO NOTHING;
+            """),
+            {
+                "payment_method": row["payment_type"]
+            }
+        )
+
+QUERY_DIM_ORDER_STATUS = """
+SELECT status_id, order_status FROM dim_order_status
+"""
+
+QUERY_DIM_TIME = """
+SELECT order_time_id, order_datetime, order_day, order_month, order_trimester, order_year, order_date, order_hour FROM dim_time
+"""
+
+QUERY_DIM_PAYMENT_METHOD = """
+SELECT payment_method_id, payment_method FROM dim_payment_method
+"""
+
+df_dim_order_status = pd.read_sql(QUERY_DIM_ORDER_STATUS, con=con_alchemy)
+df_dim_time = pd.read_sql(QUERY_DIM_TIME, con=con_alchemy)
+df_dim_payment_method = pd.read_sql(QUERY_DIM_PAYMENT_METHOD, con=con_alchemy)
+
+df_fact_order = df_full_merged.merge(df_dim_order_status, on='order_status', how='left').merge(df_dim_time, on='order_datetime', how='left').merge(df_dim_payment_method, left_on='payment_type', right_on='payment_method', how='left')
+
+df_fact_order_final = df_fact_order[['order_id', 'review_score', 'payment_value', 'price', 'freight_value', 'payment_installments', 'order_item_id', 'order_time_id', 'customer_id', 'product_id', 'payment_method_id', 'status_id']].copy()
+
+with engine.begin() as conn:
+    for _, row in df_fact_order_final.iterrows():
+        conn.execute(
+            sqlalchemy.text("""
+                INSERT INTO fato_order (order_id, score, payment_value, product_price, freight_value, installments, number_of_items, order_time_id, order_customer_id, order_product_id, order_payment_method_id, order_status_id)
+                VALUES (:order_id, :score, :payment_value, :product_price, :freight_value, :installments, :number_of_items, :order_time_id, :order_customer_id, :order_product_id, :order_payment_method_id, :order_status_id)
+                ON CONFLICT (order_id) DO NOTHING;
+            """),
+            {
+                "order_id": row["order_id"],
+                "score": row["review_score"],
+                "payment_value": row["payment_value"],
+                "product_price": row["price"],
+                "freight_value": row["freight_value"],
+                "installments": row["payment_installments"],
+                "number_of_items": row["order_item_id"],
+                "order_time_id": row["order_time_id"],
+                "order_customer_id": row["customer_id"],
+                "order_product_id": row["product_id"],
+                "order_payment_method_id": row["payment_method_id"],
+                "order_status_id": row["status_id"]
+            }
+        )
