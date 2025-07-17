@@ -1,5 +1,5 @@
   
- db = db.getSiblingDB('ecommerce');
+db = db.getSiblingDB('ecommerce');
 
 db.createCollection('order_reviews');
 
