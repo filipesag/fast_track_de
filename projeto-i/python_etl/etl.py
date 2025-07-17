@@ -216,10 +216,6 @@ try:
 except Exception:
     logging.critical("Connection with Postgres Docker failed!")
 
-missing_values = df_full_merged.isnull().sum()
-print(missing_values)
-
-
 df_status_final = df_full_merged[['order_status']].copy()
 try:
     with engine.begin() as conn:
@@ -359,3 +355,15 @@ try:
     logging.info("INSERT operation in fact table completed...")
 except SQLAlchemyError as e:
     logging.critical(f"Error during INSERT operation in fact_order: {e}")
+
+try:
+    with engine.begin() as conn:
+        conn.execute(sqlalchemy.text("DROP TABLE stage_order_status"))
+        conn.execute(sqlalchemy.text("DROP TABLE stage_time_final"))
+        conn.execute(sqlalchemy.text("DROP TABLE stage_customer_final"))
+        conn.execute(sqlalchemy.text("DROP TABLE stage_product_final"))
+        conn.execute(sqlalchemy.text("DROP TABLE stage_payment_final"))
+        conn.execute(sqlalchemy.text("DROP TABLE stage_fact_final"))
+        logging.info("Dropped stage tables...")
+except SQLAlchemyError as e:
+    logging.critical(f"Error during dropping stage tables: {e}")
