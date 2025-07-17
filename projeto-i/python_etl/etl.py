@@ -23,7 +23,7 @@ for attempt in range(max_attempts):
             host="postgres",
             port="5432"
         )
-        logging.info("Postgres Docker connection completed")
+        logging.info("Postgres Docker connection completed - psycopg2")
         break
     except psycopg2.OperationalError as e:
         logging.warning(f"Attempt nº {attempt + 1} out of {max_attempts} failed: {e}")
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS dim_time (
 """
 
 ORDER_FACT_TABLE_SCRIPT ="""
-CREATE TABLE IF NOT EXISTS fato_order (
+CREATE TABLE IF NOT EXISTS fact_order (
     order_id UUID PRIMARY KEY,
     score INTEGER,
     payment_value DECIMAL(10,2),     
@@ -132,6 +132,7 @@ try:
 
     df_payment = pd.read_csv('./input/olist_order_payments_dataset.csv')
     df_payment = df_payment.drop_duplicates(subset=['order_id','payment_type'])
+    # concatenando formas de pagamento para um único registro quando feito com multiplas formas
     df_payment_concat = df_payment.groupby('order_id')['payment_type'].agg(lambda x: ', '.join(sorted(set(x)))) \
     .reset_index()
     df_merge_order_payment = new_df.merge(df_payment_concat[['order_id','payment_type']], on='order_id', how='left').merge(df_payment[['order_id','payment_installments']], on='order_id', how='left')
@@ -165,10 +166,12 @@ try:
 except ConnectionFailure:
     logging.critical("Connection with MongoDB Docker failed!")
 
+
 collection_reviews = db["order_reviews"]
 reviews_doc = collection_reviews.find({})
 reviews_df = pd.DataFrame(reviews_doc)
 
+#adicionando as reviews no df principal
 df_full_merged = pd.merge(df_merge_order_local, reviews_df[['order_id','review_score']], on='order_id', how='left')
 client.close()
 
@@ -182,12 +185,13 @@ df_full_merged['order_month'] = df_full_merged['order_datetime'].dt.month_name()
 df_full_merged['order_trimester'] = df_full_merged['order_datetime'].dt.quarter
 df_full_merged['order_year'] = df_full_merged['order_datetime'].dt.year
 
-
+#dropando colunas inutilizaveis
 df_full_merged.drop(columns=['seller_id',
                              'shipping_limit_date'
                             ], inplace=True, errors='ignore')
 
 
+# tratando dados nulos/vazios
 df_full_merged['payment_type'] = df_full_merged['payment_type'].fillna('Not defined').astype(str)
 df_full_merged['product_category_name'] = df_full_merged['product_category_name'].replace('nan', np.nan)
 df_full_merged['product_category_name'] = df_full_merged['product_category_name'].fillna('Not informed').astype(str)
@@ -202,7 +206,7 @@ df_full_merged['payment_installments'] = df_full_merged['payment_installments'].
 try:
     DATABASE_URL = 'postgresql://f_compass:trilha_de@postgres:5432/pd_dw'
     engine = sqlalchemy.create_engine(DATABASE_URL)
-    logging.info("Connection with Postgres Docker completed!")
+    logging.info("Postgres Docker connection completed - sqlalchemy")
     con_alchemy = engine.connect()
 except Exception:
     logging.critical("Connection with Postgres Docker failed!")
@@ -210,88 +214,107 @@ except Exception:
 missing_values = df_full_merged.isnull().sum()
 print(missing_values)
 
-
 df_status_final = df_full_merged[['order_status']].copy()
-with engine.begin() as conn:
-    for _, row in df_status_final.iterrows():
-        conn.execute(
-            sqlalchemy.text("""
-                INSERT INTO dim_order_status (order_status)
-                VALUES (:order_status)
-                ON CONFLICT (order_status) DO NOTHING;
-            """),
-            {
-                "order_status": row["order_status"]
-            }
-        )
+try:
+    with engine.begin() as conn:
+        for _, row in df_status_final.iterrows():      
+            conn.execute(
+                sqlalchemy.text("""
+                    INSERT INTO dim_order_status (order_status)
+                    VALUES (:order_status)
+                    ON CONFLICT (order_status) DO NOTHING;
+                """),
+                {
+                    "order_status": row["order_status"]
+                }
+            )
+    logging.info("INSERT operation in dim_order_status table completed...")
+except sqlalchemy.exc as e:
+    logging.critical(f"Error during INSERT operation in dim_order_status: {e}")
 
 
 df_time_final = df_full_merged[['order_datetime', 'order_day', 'order_month', 'order_trimester', 'order_year', 'order_date', 'order_time']].copy()
-with engine.begin() as conn:
-    for _, row in df_time_final.iterrows():
-        conn.execute(
-            sqlalchemy.text("""
-                INSERT INTO dim_time (order_datetime, order_day, order_month, order_trimester, order_year, order_date, order_hour)
-                VALUES (:order_datetime, :order_day, :order_month, :order_trimester, :order_year, :order_date, :order_time)
-                ON CONFLICT (order_datetime) DO NOTHING;
-            """),
-            {
-                "order_datetime": row["order_datetime"],
-                "order_day": row["order_day"],
-                "order_month": row["order_month"],
-                "order_trimester": row["order_trimester"],
-                "order_year": row["order_year"],
-                "order_date": row["order_date"],
-                "order_time": row["order_time"]
-            }
-        )
+try:
+    with engine.begin() as conn:
+        for _, row in df_time_final.iterrows():            
+            conn.execute(
+                sqlalchemy.text("""
+                    INSERT INTO dim_time (order_datetime, order_day, order_month, order_trimester, order_year, order_date, order_hour)
+                    VALUES (:order_datetime, :order_day, :order_month, :order_trimester, :order_year, :order_date, :order_time)
+                    ON CONFLICT (order_datetime) DO NOTHING;
+                """),
+                {
+                    "order_datetime": row["order_datetime"],
+                    "order_day": row["order_day"],
+                    "order_month": row["order_month"],
+                    "order_trimester": row["order_trimester"],
+                    "order_year": row["order_year"],
+                    "order_date": row["order_date"],
+                    "order_time": row["order_time"]
+                }
+            )
+    logging.info("INSERT operation in dim_time table completed...")
+except sqlalchemy.exc as e:
+    logging.critical(f"Error during INSERT operation in dim_time: {e}")
 
 
 df_customer_final = df_full_merged[['customer_id', 'customer_city', 'customer_state']].copy()
-with engine.begin() as conn:
-    for _, row in df_customer_final.iterrows():
-        conn.execute(
-            sqlalchemy.text("""
-                INSERT INTO dim_customer (customer_id, customer_city, customer_state)
-                VALUES (:customer_id, :customer_city, :customer_state)
-                ON CONFLICT (customer_id) DO NOTHING;
-            """),
-            {
-                "customer_id": row["customer_id"],
-                "customer_city": row["customer_city"],
-                "customer_state": row["customer_state"]
-            }
-        )
+try:
+    with engine.begin() as conn:
+        for _, row in df_customer_final.iterrows():
+            conn.execute(
+                sqlalchemy.text("""
+                    INSERT INTO dim_customer (customer_id, customer_city, customer_state)
+                    VALUES (:customer_id, :customer_city, :customer_state)
+                    ON CONFLICT (customer_id) DO NOTHING;
+                """),
+                {
+                    "customer_id": row["customer_id"],
+                    "customer_city": row["customer_city"],
+                    "customer_state": row["customer_state"]
+                }
+            )
+    logging.info("INSERT operation in dim_customer table completed...")
+except sqlalchemy.exc as e:
+    logging.critical(f"Error during INSERT operation in dim_customer: {e}")
 
 
 df_product_final = df_full_merged[['product_id', 'product_category_name']].copy()
-with engine.begin() as conn:
-    for _, row in df_product_final.iterrows():
-        conn.execute(
-            sqlalchemy.text("""
-                INSERT INTO dim_product (product_id, product_category)
-                VALUES (:product_id, :product_category)
-                ON CONFLICT (product_id) DO NOTHING;
-            """),
-            {
-                "product_id": row["product_id"],
-                "product_category": row["product_category_name"]
-            }
-        )
+try:
+    with engine.begin() as conn:
+        for _, row in df_product_final.iterrows():
+            conn.execute(
+                sqlalchemy.text("""
+                    INSERT INTO dim_product (product_id, product_category)
+                    VALUES (:product_id, :product_category)
+                    ON CONFLICT (product_id) DO NOTHING;
+                """),
+                {
+                    "product_id": row["product_id"],
+                    "product_category": row["product_category_name"]
+                }
+            )
+    logging.info("INSERT operation in dim_product table completed...")
+except sqlalchemy.exc as e:
+    logging.critical(f"Error during INSERT operation in dim_product: {e}")
 
 df_payment_final = df_full_merged[['payment_type']].copy()
-with engine.begin() as conn:
-    for _, row in df_payment_final.iterrows():
-        conn.execute(
-            sqlalchemy.text("""
-                INSERT INTO dim_payment_method (payment_method)
-                VALUES (:payment_method)
-                ON CONFLICT (payment_method) DO NOTHING;
-            """),
-            {
-                "payment_method": row["payment_type"]
-            }
-        )
+try:
+    with engine.begin() as conn:
+        for _, row in df_payment_final.iterrows():
+            conn.execute(
+                sqlalchemy.text("""
+                    INSERT INTO dim_payment_method (payment_method)
+                    VALUES (:payment_method)
+                    ON CONFLICT (payment_method) DO NOTHING;
+                """),
+                {
+                    "payment_method": row["payment_type"]
+                }
+            )
+    logging.info("INSERT operation in dim_payment table completed...")
+except sqlalchemy.exc as e:
+    logging.critical(f"Error during INSERT operation in dim_payment_method: {e}")
 
 QUERY_DIM_ORDER_STATUS = """
 SELECT status_id, order_status FROM dim_order_status
@@ -305,34 +328,41 @@ QUERY_DIM_PAYMENT_METHOD = """
 SELECT payment_method_id, payment_method FROM dim_payment_method
 """
 
+#query nas tabelas dimensoes com ids novos para merge
 df_dim_order_status = pd.read_sql(QUERY_DIM_ORDER_STATUS, con=con_alchemy)
 df_dim_time = pd.read_sql(QUERY_DIM_TIME, con=con_alchemy)
 df_dim_payment_method = pd.read_sql(QUERY_DIM_PAYMENT_METHOD, con=con_alchemy)
 
+#merge dos dados da tabela dimensao para df principal
 df_fact_order = df_full_merged.merge(df_dim_order_status, on='order_status', how='left').merge(df_dim_time, on='order_datetime', how='left').merge(df_dim_payment_method, left_on='payment_type', right_on='payment_method', how='left')
 
+#obtendo valores para tabela fato
 df_fact_order_final = df_fact_order[['order_id', 'review_score', 'payment_value', 'price', 'freight_value', 'payment_installments', 'order_item_id', 'order_time_id', 'customer_id', 'product_id', 'payment_method_id', 'status_id']].copy()
 
-with engine.begin() as conn:
-    for _, row in df_fact_order_final.iterrows():
-        conn.execute(
-            sqlalchemy.text("""
-                INSERT INTO fato_order (order_id, score, payment_value, product_price, freight_value, installments, number_of_items, order_time_id, order_customer_id, order_product_id, order_payment_method_id, order_status_id)
-                VALUES (:order_id, :score, :payment_value, :product_price, :freight_value, :installments, :number_of_items, :order_time_id, :order_customer_id, :order_product_id, :order_payment_method_id, :order_status_id)
-                ON CONFLICT (order_id) DO NOTHING;
-            """),
-            {
-                "order_id": row["order_id"],
-                "score": row["review_score"],
-                "payment_value": row["payment_value"],
-                "product_price": row["price"],
-                "freight_value": row["freight_value"],
-                "installments": row["payment_installments"],
-                "number_of_items": row["order_item_id"],
-                "order_time_id": row["order_time_id"],
-                "order_customer_id": row["customer_id"],
-                "order_product_id": row["product_id"],
-                "order_payment_method_id": row["payment_method_id"],
-                "order_status_id": row["status_id"]
-            }
-        )
+try:
+    with engine.begin() as conn:
+        for _, row in df_fact_order_final.iterrows():
+            conn.execute(
+                sqlalchemy.text("""
+                    INSERT INTO fact_order (order_id, score, payment_value, product_price, freight_value, installments, number_of_items, order_time_id, order_customer_id, order_product_id, order_payment_method_id, order_status_id)
+                    VALUES (:order_id, :score, :payment_value, :product_price, :freight_value, :installments, :number_of_items, :order_time_id, :order_customer_id, :order_product_id, :order_payment_method_id, :order_status_id)
+                    ON CONFLICT (order_id) DO NOTHING;
+                """),
+                {
+                    "order_id": row["order_id"],
+                    "score": row["review_score"],
+                    "payment_value": row["payment_value"],
+                    "product_price": row["price"],
+                    "freight_value": row["freight_value"],
+                    "installments": row["payment_installments"],
+                    "number_of_items": row["order_item_id"],
+                    "order_time_id": row["order_time_id"],
+                    "order_customer_id": row["customer_id"],
+                    "order_product_id": row["product_id"],
+                    "order_payment_method_id": row["payment_method_id"],
+                    "order_status_id": row["status_id"]
+                }
+            )
+    logging.info("INSERT operation in fact table completed...")
+except sqlalchemy.exc as e:
+    logging.critical(f"Error during INSERT operation in fact_order: {e}")
