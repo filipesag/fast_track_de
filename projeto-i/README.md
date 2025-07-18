@@ -20,7 +20,7 @@ O Data Warehouse foi estruturado seguindo o modelo dimensional clássico, com ta
 
 ---
 
-## 🔧 Arquitetura da Aplicação
+## 🔧 Diagrama da Arquitetura da Aplicação
 
 A aplicação foi desenvolvida utilizando as seguintes tecnologias:
 
