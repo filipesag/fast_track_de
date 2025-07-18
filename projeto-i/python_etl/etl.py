@@ -130,29 +130,31 @@ close_connection(conn)
 
 # juntando DFs para tratamento dos dados
 try:
+
+    df_status = pd.read_csv('./input/olist_orders_dataset.csv')
+    df_status = df_status.drop_duplicates(subset=['order_id'])
+    
     df = pd.read_csv('./input/olist_order_items_dataset.csv')
     df_grouped_by_id = df.groupby("order_id")["order_item_id"].max().reset_index()
     df_grouped_by_id = df_grouped_by_id.drop_duplicates(subset=['order_id'])
-    new_df = pd.merge(df_grouped_by_id, df, on=["order_id", "order_item_id"], how="inner")
+    new_df = pd.merge(df_status[['order_id','customer_id','order_status','order_purchase_timestamp']], df_grouped_by_id, on="order_id", how="left") \
+    .merge(df[['order_id','product_id','price','freight_value']], on='order_id', how='left')
 
     df_payment = pd.read_csv('./input/olist_order_payments_dataset.csv')
-    df_payment = df_payment.drop_duplicates(subset=['order_id','payment_type'])
+    df_payment = df_payment.drop_duplicates(subset=['order_id','payment_sequential','payment_type'])
     # concatenando formas de pagamento para um único registro quando feito com multiplas formas
     df_payment_concat = df_payment.groupby('order_id')['payment_type'].agg(lambda x: ', '.join(sorted(set(x)))) \
     .reset_index()
     df_merge_order_payment = new_df.merge(df_payment_concat[['order_id','payment_type']], on='order_id', how='left').merge(df_payment[['order_id','payment_installments']], on='order_id', how='left')
-
-    df_status = pd.read_csv('./input/olist_orders_dataset.csv')
-    df_status = df_status.drop_duplicates(subset=['order_id'])
-    df_merge_order_status = pd.merge(df_merge_order_payment, df_status[['order_id','customer_id','order_status','order_purchase_timestamp']], on='order_id', how='left')
+    df_merge_order_payment = df_merge_order_payment.drop_duplicates(subset=['order_id'])
+    
+    df_local = pd.read_csv('./input/olist_customers_dataset.csv')
+    df_local = df_local.drop_duplicates(subset=['customer_id','customer_unique_id'])
+    df_merge_order_local = pd.merge(df_merge_order_payment, df_local[['customer_id', 'customer_city', 'customer_state']], on='customer_id', how='left')
 
     df_products = pd.read_csv('./input/olist_products_dataset.csv')
     df_products = df_products.drop_duplicates(subset=['product_id'])
-    df_merge_order_produtcs = pd.merge(df_merge_order_status, df_products[['product_id','product_category_name']], on='product_id', how='left')
-
-    df_local = pd.read_csv('./input/olist_customers_dataset.csv')
-    df_local = df_local.drop_duplicates(subset=['customer_id','customer_unique_id'])
-    df_merge_order_local = pd.merge(df_merge_order_produtcs, df_local[['customer_id', 'customer_city', 'customer_state']], on='customer_id', how='left')
+    df_products = df_products[['product_id','product_category_name']]
 
 except Exception as e:
     logging.critical(f"Error in data processing: {e}")
@@ -198,8 +200,8 @@ df_full_merged.drop(columns=['seller_id',
 
 # tratando dados nulos/vazios
 df_full_merged['payment_type'] = df_full_merged['payment_type'].fillna('Not defined').astype(str)
-df_full_merged['product_category_name'] = df_full_merged['product_category_name'].replace('nan', np.nan)
-df_full_merged['product_category_name'] = df_full_merged['product_category_name'].fillna('Not informed').astype(str)
+df_products['product_category_name'] = df_products['product_category_name'].replace('nan', np.nan)
+df_products['product_category_name'] = df_products['product_category_name'].fillna('Not informed').astype(str)
 df_full_merged['customer_city'] = df_full_merged['customer_city'].fillna('Not informed').astype(str)
 df_full_merged['customer_state'] = df_full_merged['customer_state'].fillna('Not informed').astype(str)
 df_full_merged['review_score'] = df_full_merged['review_score'].replace('nan', np.nan)
@@ -269,11 +271,11 @@ except SQLAlchemyError as e:
     logging.critical(f"Error during INSERT operation in dim_customer: {e}")
 
 
-df_product_final = df_full_merged[['product_id', 'product_category_name']].copy().drop_duplicates()
-df_product_final['product_id'] = df_product_final['product_id'].apply(to_uuid)
+# df_product_final = df_full_merged[['product_id', 'product_category_name']].copy().drop_duplicates()
+df_products['product_id'] = df_products['product_id'].apply(to_uuid)
 try:
     with engine.begin() as conn:
-        df_product_final.to_sql("stage_product_final", con_alchemy, index=False, if_exists="replace",dtype={"product_id": sqlalchemy.dialects.postgresql.UUID})
+        df_products.to_sql("stage_product_final", con_alchemy, index=False, if_exists="replace",dtype={"product_id": sqlalchemy.dialects.postgresql.UUID})
         conn.execute(
             sqlalchemy.text("""
                 MERGE INTO dim_product AS tgt
@@ -328,7 +330,7 @@ df_fact_order = df_full_merged.merge(df_dim_order_status, on='order_status', how
 
 #obtendo valores para tabela fato
 df_fact_order_final = df_fact_order[['order_id', 'review_score', 'payment_value', 'price', 'freight_value', 'payment_installments', 'order_item_id', 'order_time_id', 'customer_id', 'product_id', 'payment_method_id', 'status_id']].copy()
-df_fact_order_final.drop_duplicates(subset=['order_id'], inplace=True)
+# df_fact_order_final.drop_duplicates(subset=['order_id'], inplace=True)
 
 df_fact_order_final['order_id'] = df_fact_order_final['order_id'].apply(to_uuid)
 df_fact_order_final['order_time_id'] = df_fact_order_final['order_time_id'].apply(to_uuid)
