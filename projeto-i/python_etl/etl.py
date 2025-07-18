@@ -216,7 +216,7 @@ try:
 except Exception:
     logging.critical("Connection with Postgres Docker failed!")
 
-df_status_final = df_full_merged[['order_status']].copy()
+df_status_final = df_full_merged[['order_status']].copy().drop_duplicates()
 try:
     with engine.begin() as conn:
         df_status_final.to_sql("stage_order_status", con_alchemy, index=False, if_exists="replace")
@@ -231,7 +231,7 @@ try:
 except SQLAlchemyError as e:
     logging.critical(f"Error during INSERT operation in dim_order_status: {e}")
 
-df_time_final = df_full_merged[['order_datetime', 'order_day', 'order_month', 'order_trimester', 'order_year', 'order_date', 'order_time']].copy()
+df_time_final = df_full_merged[['order_datetime', 'order_day', 'order_month', 'order_trimester', 'order_year', 'order_date', 'order_time']].copy().drop_duplicates()
 try:
     with engine.begin() as conn:
         df_time_final.to_sql("stage_time_final", con_alchemy, index=False, if_exists="replace")         
@@ -249,7 +249,7 @@ except SQLAlchemyError as e:
     logging.critical(f"Error during INSERT operation in dim_time: {e}")
 
 
-df_customer_final = df_full_merged[['customer_id', 'customer_city', 'customer_state']].copy()
+df_customer_final = df_full_merged[['customer_id', 'customer_city', 'customer_state']].copy().drop_duplicates()
 df_customer_final['customer_id'] = df_customer_final['customer_id'].apply(to_uuid)
 try:
     with engine.begin() as conn:
@@ -269,7 +269,7 @@ except SQLAlchemyError as e:
     logging.critical(f"Error during INSERT operation in dim_customer: {e}")
 
 
-df_product_final = df_full_merged[['product_id', 'product_category_name']].copy()
+df_product_final = df_full_merged[['product_id', 'product_category_name']].copy().drop_duplicates()
 df_product_final['product_id'] = df_product_final['product_id'].apply(to_uuid)
 try:
     with engine.begin() as conn:
@@ -288,7 +288,7 @@ try:
 except SQLAlchemyError as e:
     logging.critical(f"Error during INSERT operation in dim_product: {e}")
 
-df_payment_final = df_full_merged[['payment_type']].copy()
+df_payment_final = df_full_merged[['payment_type']].copy().drop_duplicates()
 try:
     with engine.begin() as conn:
         df_payment_final.to_sql("stage_payment_final", con_alchemy, index=False, if_exists="replace")
@@ -328,6 +328,8 @@ df_fact_order = df_full_merged.merge(df_dim_order_status, on='order_status', how
 
 #obtendo valores para tabela fato
 df_fact_order_final = df_fact_order[['order_id', 'review_score', 'payment_value', 'price', 'freight_value', 'payment_installments', 'order_item_id', 'order_time_id', 'customer_id', 'product_id', 'payment_method_id', 'status_id']].copy()
+df_fact_order_final.drop_duplicates(subset=['order_id'], inplace=True)
+
 df_fact_order_final['order_id'] = df_fact_order_final['order_id'].apply(to_uuid)
 df_fact_order_final['order_time_id'] = df_fact_order_final['order_time_id'].apply(to_uuid)
 df_fact_order_final['customer_id'] = df_fact_order_final['customer_id'].apply(to_uuid)
