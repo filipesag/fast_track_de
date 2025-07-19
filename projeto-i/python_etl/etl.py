@@ -8,6 +8,7 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from sqlalchemy.exc import SQLAlchemyError
 import uuid
+from decimal import Decimal
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +56,7 @@ def to_uuid(x):
 ORDER_STATUS_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_order_status (
     status_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    order_status VARCHAR(40) UNIQUE
+    order_status VARCHAR(40)
     );
 """
 
@@ -77,14 +78,14 @@ CREATE TABLE IF NOT EXISTS dim_product (
 PAYMENT_METHOD_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_payment_method ( 
     payment_method_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
-    payment_method VARCHAR(50) UNIQUE
+    payment_method VARCHAR(50) 
 );
 """
 
 TIME_TABLE_SCRIPT = """
 CREATE TABLE IF NOT EXISTS dim_time (
     order_time_id UUID PRIMARY KEY DEFAULT gen_random_uuid(), 
-    order_datetime TIMESTAMP UNIQUE, 
+    order_datetime TIMESTAMP,
     order_day VARCHAR(20), 
     order_month VARCHAR(20), 
     order_trimester INTEGER, 
@@ -177,7 +178,7 @@ except ConnectionFailure:
 collection_reviews = db["order_reviews"]
 reviews_collection = collection_reviews.find({})
 reviews_df = pd.DataFrame(reviews_collection)
-# trata avaliações duplicadas com score diferentes, pegando a média
+# trata avaliações duplicadas, com score diferentes, pegando a média
 reviews_df[['order_id','review_score']]
 reviews_df['review_score'] = reviews_df['review_score'].astype(float)
 reviews_final_df = reviews_df.groupby('order_id')['review_score'].mean().round(2).reset_index()
@@ -208,8 +209,6 @@ df_full_merged['product_category_name'] = df_full_merged['product_category_name'
 df_full_merged['product_category_name'] = df_full_merged['product_category_name'].fillna('Not informed').astype(str)
 df_full_merged['customer_city'] = df_full_merged['customer_city'].fillna('Not informed').astype(str)
 df_full_merged['customer_state'] = df_full_merged['customer_state'].fillna('Not informed').astype(str)
-df_full_merged['review_score'] = df_full_merged['review_score'].replace('nan', np.nan)
-df_full_merged['review_score'] = df_full_merged['review_score'].fillna(-1).astype(int)
 df_full_merged['payment_installments'] = df_full_merged['payment_installments'].replace('nan', np.nan)
 df_full_merged['payment_installments'] = df_full_merged['payment_installments'].fillna(-1).astype(int)
 
@@ -279,6 +278,7 @@ df_product_final = df_full_merged[['product_id', 'product_category_name']].copy(
 df_product_final = df_product_final[df_product_final['product_id'].notna()] #pela diferenca entre os arquivos de produtos e pedidos, garante que nao entra id nulos
 df_product_final['product_id'] = df_product_final['product_id'].apply(to_uuid)
 
+
 try:
     with engine.begin() as conn:
         df_product_final.to_sql("stage_product_final", con_alchemy, index=False, if_exists="replace",dtype={"product_id": sqlalchemy.dialects.postgresql.UUID})
@@ -336,14 +336,25 @@ df_fact_order = df_full_merged.merge(df_dim_order_status, on='order_status', how
 
 #obtendo valores para tabela fato
 df_fact_order_final = df_fact_order[['order_id', 'review_score', 'payment_value', 'price', 'freight_value', 'payment_installments', 'order_item_id', 'order_time_id', 'customer_id', 'product_id', 'payment_method_id', 'status_id']].copy()
-# df_fact_order_final.drop_duplicates(subset=['order_id'], inplace=True)
-dupes = df_fact_order_final[df_fact_order_final.duplicated(subset=['order_id'], keep=False)]
+
+#removendo pedidos registrados sem ter atribuido um produto 
+#aqui garante que pedidos cancelados, unavailable e sem valores monetários sejam populados
+
 
 
 df_fact_order_final['order_id'] = df_fact_order_final['order_id'].apply(to_uuid)
 df_fact_order_final['order_time_id'] = df_fact_order_final['order_time_id'].apply(to_uuid)
 df_fact_order_final['customer_id'] = df_fact_order_final['customer_id'].apply(to_uuid)
 df_fact_order_final['payment_method_id'] = df_fact_order_final['payment_method_id'].apply(to_uuid)
+
+#tratamento de dados da tabela fato
+df_fact_order_final['payment_value'] = pd.to_numeric(df_fact_order_final['payment_value'], errors='coerce').fillna(0.0).astype(float)
+df_fact_order_final['price'] = pd.to_numeric(df_fact_order_final['price'], errors='coerce').fillna(0.0).astype(float)
+df_fact_order_final['freight_value'] = pd.to_numeric(df_fact_order_final['freight_value'], errors='coerce').fillna(0.0).astype(float)
+df_fact_order_final['payment_installments'] = pd.to_numeric(df_fact_order_final['payment_installments'], errors='coerce').fillna(0).astype(int)
+df_fact_order_final['order_item_id'] = pd.to_numeric(df_fact_order_final['order_item_id'], errors='coerce').fillna(0).astype(int)
+df_fact_order_final['review_score'] = pd.to_numeric(df_fact_order_final['review_score'], errors='coerce').fillna(-1).astype(int)
+
 try:
     with engine.begin() as conn:
         df_fact_order_final.to_sql("stage_fact_final", con=engine, index=False, if_exists="replace", dtype={
@@ -354,6 +365,7 @@ try:
             "payment_method_id": sqlalchemy.dialects.postgresql.UUID,
             "status_id": sqlalchemy.dialects.postgresql.UUID,
         })
+
         conn.execute(
             sqlalchemy.text("""
                 MERGE INTO fact_order AS tgt
