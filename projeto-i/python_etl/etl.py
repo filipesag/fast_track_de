@@ -116,6 +116,11 @@ CREATE TABLE IF NOT EXISTS fact_order (
 );
 """
 
+UNKNOWN_PRODUCT_ID = "00000000-0000-0000-0000-000000000001"
+UNKNOWN_CLIENT_ID = "00000000-0000-0000-0000-000000000002"
+
+
+
 # criando tabelas do modelo dimensional
 create_table(conn, ORDER_STATUS_TABLE_SCRIPT,'dim_order_status')
 create_table(conn, CUSTOMER_TABLE_SCRIPT,'dim_customer')
@@ -149,17 +154,25 @@ try:
     df_merge_order_payment = df_merge_order_payment.drop_duplicates(subset=['order_id'])
     
     df_local = pd.read_csv('./input/olist_customers_dataset.csv')
+    if UNKNOWN_CLIENT_ID not in df_local['customer_id'].values:
+        new_row_client = pd.DataFrame([{
+            'customer_id': UNKNOWN_CLIENT_ID,
+            'customer_city': 'Client Unknown',
+            'customer_state': 'Client Unknown'
+        }])
+        df_products = pd.concat([df_local, new_row_client], ignore_index=True)
+    df_merge_order_payment['customer_id'] = df_merge_order_payment['customer_id'].fillna(UNKNOWN_CLIENT_ID)
     df_local = df_local.drop_duplicates(subset=['customer_id','customer_unique_id'])
     df_merge_order_local = pd.merge(df_merge_order_payment, df_local[['customer_id', 'customer_city', 'customer_state']], on='customer_id', how='left')
 
     df_products = pd.read_csv('./input/olist_products_dataset.csv')
-    default_unknown_id = str(uuid.uuid4())
-    new_row = pd.DataFrame([{
-        'product_id': default_unknown_id,
-        'product_category_name': 'Product Unknown'
-    }])
-    df_products = pd.concat([df_products, new_row], ignore_index=True)
-    df_merge_order_local['product_id'] = df_merge_order_local['product_id'].fillna(default_unknown_id)
+    if UNKNOWN_PRODUCT_ID not in df_products['product_id'].values:
+        new_row_product= pd.DataFrame([{
+            'product_id': UNKNOWN_PRODUCT_ID,
+            'product_category_name': 'Product Unknown'
+        }])
+        df_products = pd.concat([df_products, new_row_product], ignore_index=True)
+    df_merge_order_local['product_id'] = df_merge_order_local['product_id'].fillna(UNKNOWN_PRODUCT_ID)
     df_full_merged = df_merge_order_local.merge(df_products, on='product_id', how='left')
 
 except Exception as e:
