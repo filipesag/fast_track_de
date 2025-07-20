@@ -1,2 +1,22 @@
-# fast_track_de
-Repositório criado para atividades da Trilha de Engenharia de Dados ministrado pela Compass.UOL
+# 🚀 Fast Track - Engenharia de Dados
+
+Repositório criado para as atividades da Trilha de Engenharia de Dados ministrada pela Compass.UOL.  
+Cada projeto possui um README específico localizado em seu respectivo diretório.
+
+---
+
+## ☎️ Contato
+
+👷 Colaborador: Filipe da Silva Aguiar  
+📧 E-mail: filipe.aguiar@compasso.com.br  
+🏢 Studio: Quality Engineering  
+
+---
+
+## 💭 Conhecimentos
+
+- **Linguagens:** Java, Python, JavaScript  
+- **Bibliotecas / Frameworks:** Spring Boot, Apache Spark, Pandas, NumPy, Cypress, Selenium, Appium  
+- **Cloud:** AWS, Microsoft Azure  
+- **Ferramentas:** Git, GitHub, GitLab, Docker, Databricks  
+- **Bancos de Dados:** PostgreSQL, MySQL, Oracle, SQLite, MongoDB
