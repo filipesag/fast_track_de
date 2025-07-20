@@ -16,7 +16,7 @@ Cada projeto possui um README específico localizado em seu respectivo diretóri
 ## 💭 Conhecimentos
 
 - **Linguagens:** Java, Python, JavaScript  
-- **Bibliotecas / Frameworks:** Spring Boot, Apache Spark, Pandas, NumPy, Cypress, Selenium, Appium  
+- **Bibliotecas / Frameworks:** Spring Boot, Apache Spark, Pandas, Cypress, Selenium, Appium  
 - **Cloud:** AWS, Microsoft Azure  
 - **Ferramentas:** Git, GitHub, GitLab, Docker, Databricks  
 - **Bancos de Dados:** PostgreSQL, MySQL, Oracle, SQLite, MongoDB
