@@ -8,7 +8,6 @@ from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from sqlalchemy.exc import SQLAlchemyError
 import uuid
-from decimal import Decimal
 
 logging.basicConfig(
     level=logging.INFO,
@@ -154,9 +153,15 @@ try:
     df_merge_order_local = pd.merge(df_merge_order_payment, df_local[['customer_id', 'customer_city', 'customer_state']], on='customer_id', how='left')
 
     df_products = pd.read_csv('./input/olist_products_dataset.csv')
-    df_products = df_products.drop_duplicates(subset=['product_id'])
-    df_products = df_products[['product_id','product_category_name']]
+    default_unknown_id = str(uuid.uuid4())
+    new_row = pd.DataFrame([{
+        'product_id': default_unknown_id,
+        'product_category_name': 'Product Unknown'
+    }])
+    df_products = pd.concat([df_products, new_row], ignore_index=True)
+    df_merge_order_local['product_id'] = df_merge_order_local['product_id'].fillna(default_unknown_id)
     df_full_merged = df_merge_order_local.merge(df_products, on='product_id', how='left')
+
 except Exception as e:
     logging.critical(f"Error in data processing: {e}")
     raise e
@@ -206,7 +211,7 @@ df_full_merged.drop(columns=['seller_id',
 # tratando dados nulos/vazios
 df_full_merged['payment_type'] = df_full_merged['payment_type'].fillna('Not defined').astype(str)
 df_full_merged['product_category_name'] = df_full_merged['product_category_name'].replace('nan', np.nan)
-df_full_merged['product_category_name'] = df_full_merged['product_category_name'].fillna('Not informed').astype(str)
+df_full_merged['product_category_name'] = df_full_merged['product_category_name'].fillna('Not informed')
 df_full_merged['customer_city'] = df_full_merged['customer_city'].fillna('Not informed').astype(str)
 df_full_merged['customer_state'] = df_full_merged['customer_state'].fillna('Not informed').astype(str)
 df_full_merged['payment_installments'] = df_full_merged['payment_installments'].replace('nan', np.nan)
@@ -275,9 +280,8 @@ except SQLAlchemyError as e:
 
 
 df_product_final = df_full_merged[['product_id', 'product_category_name']].copy().drop_duplicates()
-df_product_final = df_product_final[df_product_final['product_id'].notna()] #pela diferenca entre os arquivos de produtos e pedidos, garante que nao entra id nulos
+df_product_final = df_product_final[df_product_final['product_id'].notna()]
 df_product_final['product_id'] = df_product_final['product_id'].apply(to_uuid)
-
 
 try:
     with engine.begin() as conn:
