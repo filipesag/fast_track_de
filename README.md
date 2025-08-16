@@ -5,14 +5,6 @@ Cada projeto possui um README específico localizado em seu respectivo diretóri
 
 ---
 
-## ☎️ Contato
-
-👷 Colaborador: Filipe da Silva Aguiar  
-📧 E-mail: filipe.aguiar@compasso.com.br  
-🏢 Studio: Quality Engineering  
-
----
-
 ## 💭 Conhecimentos
 
 - **Linguagens:** Java, Python, JavaScript  
