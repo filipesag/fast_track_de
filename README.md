@@ -15,7 +15,7 @@ Este projeto tem como objetivo construir um Data Warehouse para análise de pedi
 O Data Warehouse foi estruturado seguindo o modelo dimensional clássico, com tabelas de dimensão para status do pedido, cliente, produto, forma de pagamento, tempo e uma tabela fato central para pedidos.
 
 <p align="center">
-  <img src="images/Olist - DW.png" alt="Diagrama do Modelo Dimensional" width="700">
+  <img src="projeto-i/images/Olist - DW.png" alt="Diagrama do Modelo Dimensional" width="700">
 </p>
 
 ---
@@ -30,7 +30,7 @@ A aplicação foi desenvolvida utilizando as seguintes tecnologias:
 - Docker (Orquestração de containers e ambiente isolado)
 
 <p align="center">
-  <img src="images/arquitetura-pd_dw.png" alt="Diagrama Arquitetural" width="700">
+  <img src="projeto-i/images/arquitetura-pd_dw.png" alt="Diagrama Arquitetural" width="700">
 </p>
 
 ---
@@ -40,7 +40,7 @@ A aplicação foi desenvolvida utilizando as seguintes tecnologias:
 A estrutura recomendada para execução:
 
 <p align="center">
-  <img src="images/estrutura-pasta.png" alt="Estrutura de Pastas" width="700">
+  <img src="projeto-i/images/estrutura-pasta.png" alt="Estrutura de Pastas" width="700">
 </p>
 
 ---
